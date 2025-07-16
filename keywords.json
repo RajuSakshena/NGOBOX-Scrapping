@@ -1,0 +1,6 @@
+{
+    "Governance": ["governance", "policy", "capacity building", "municipal", "M&E", "fiscal", "social audits", "fundraising", "NitISetu", "administration", "public", "management"],
+    "Learning": ["education", "skill", "training", "life skills", "TVET", "student", "learning by doing", "contextualized learning", "teaching", "development", "curriculum"],
+    "Safety": ["gender", "safety", "equity", "mobility", "transport", "sexual health", "gender-responsive", "institutional safety", "SAFEER", "security", "protection", "wellbeing"],
+    "Climate": ["climate", "resilience", "environment", "disaster", "sustainability", "green", "climate adaptation", "democratize climate", "ecology", "conservation", "renewable"]
+}
