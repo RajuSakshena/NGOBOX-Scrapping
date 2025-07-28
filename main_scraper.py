@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from datetime import datetime
 
-# === Load keywords ===
+# === Load keywords.json ===
 try:
     with open('keywords.json', 'r') as file:
         keywords = json.load(file)
@@ -97,22 +97,22 @@ def extract_how_to_apply_from_html(description):
 def fetch_opportunities(type_name, base_url):
     listings, seen_links = [], set()
     page = 1
-    MAX_PAGES = 3  # Limit for testing
+    MAX_PAGES = 3  # Adjust to fewer pages for quicker scraping
 
     while page <= MAX_PAGES:
         url = f"{base_url}?page={page}"
-        print(f"🔍 Scraping {type_name} Page {page} → {url}")
+        print(f"🔍 Scraping {type_name} Page {page}: {url}")
 
         try:
-            res = requests.get(url, headers=HEADERS, timeout=10)
+            res = requests.get(url, headers=HEADERS, timeout=15)
             soup = BeautifulSoup(res.text, 'html.parser')
         except Exception as e:
-            print(f"❌ Failed to load page {page}: {e}")
+            print(f"❌ Request error on page {page}: {e}")
             break
 
         cards = soup.find_all('div', class_='card-block')
         if not cards:
-            print(f"⚠️ No more cards found on {type_name} Page {page}. Stopping.")
+            print(f"⚠️ No cards found on {type_name} Page {page}")
             break
 
         for card in cards:
@@ -128,10 +128,10 @@ def fetch_opportunities(type_name, base_url):
                 continue
 
             try:
-                detail_res = requests.get(link, headers=HEADERS, timeout=10)
+                detail_res = requests.get(link, headers=HEADERS, timeout=15)
                 detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
             except Exception as e:
-                print(f"❌ Failed to load detail page: {link} — {e}")
+                print(f"❌ Error fetching detail page: {link} - {e}")
                 continue
 
             deadline = 'N/A'
@@ -145,7 +145,6 @@ def fetch_opportunities(type_name, base_url):
             description = BeautifulSoup(description_html, 'html.parser').get_text(separator=' ', strip=True)
             how_to_apply = extract_how_to_apply_from_html(description)
 
-            # Keyword matching
             text_blob = (title + " " + description + " " + how_to_apply).lower()
             matched_verticals = []
             for vertical in priority:
@@ -154,7 +153,6 @@ def fetch_opportunities(type_name, base_url):
                         matched_verticals.append(vertical)
                         break
 
-            # TEMP: skip filtering
             listings.append({
                 "Type": type_name,
                 "Title": title,
@@ -173,51 +171,52 @@ def fetch_opportunities(type_name, base_url):
     return listings
 
 def run_scraper():
-    all_data = []
-    for name, url in URLS.items():
-        all_data.extend(fetch_opportunities(name, url))
+    try:
+        all_data = []
+        for name, url in URLS.items():
+            all_data.extend(fetch_opportunities(name, url))
 
-    print("📌 Total scraped:", len(all_data))
-    if all_data:
-        print("📌 Sample record:", all_data[0])
+        print("📦 Total items scraped:", len(all_data))
+        if not all_data:
+            print("⚠️ No data found to save")
+            return
 
-    if not all_data:
-        print("⚠️ No data to save.")
-        return
+        if not os.path.exists("output"):
+            os.makedirs("output")
 
-    if not os.path.exists('output'):
-        os.makedirs('output')
+        df = pd.DataFrame(all_data)
+        df = df[df["Link"].notna() & (df["Link"].str.strip() != "")]
 
-    df = pd.DataFrame(all_data)
-    df = df[df['Link'].notna() & (df['Link'].str.strip() != '')]
+        df["Clickable_Link"] = df.apply(
+            lambda row: '=HYPERLINK("{}","{}")'.format(row["Link"], row["Title"].replace('"', '""')),
+            axis=1
+        )
 
-    df['Clickable_Link'] = df.apply(
-        lambda row: '=HYPERLINK("{}","{}")'.format(row['Link'], row['Title'].replace('"', '""')),
-        axis=1
-    )
+        df["Deadline_Date"] = pd.to_datetime(df["Deadline"], format="%d %b %Y", errors="coerce")
+        today = pd.Timestamp(datetime.today().date())
+        df = df[df["Deadline_Date"] >= today]
 
-    df['Deadline_Date'] = pd.to_datetime(df['Deadline'], format='%d %b %Y', errors='coerce')
-    today = pd.Timestamp(datetime.today().date())
-    df = df[df['Deadline_Date'] >= today]
+        df = df.sort_values(["Deadline_Date"], na_position="last")
+        df = df[["Type", "Title", "Description", "How_to_Apply", "Matched_Vertical", "Deadline", "Clickable_Link"]]
 
-    df = df.sort_values(['Deadline_Date'], na_position='last')
-    df = df[['Type', 'Title', 'Description', 'How_to_Apply', 'Matched_Vertical', 'Deadline', 'Clickable_Link']]
+        excel_path = "output/relevant_grants.xlsx"
+        try:
+            df.to_excel(excel_path, index=False, engine="openpyxl")
 
-    excel_path = 'output/relevant_grants.xlsx'
-    df.to_excel(excel_path, index=False, engine='openpyxl')
+            wb = load_workbook(excel_path)
+            ws = wb.active
+            for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
+                ws.column_dimensions[col].width = width
+            for row in ws.iter_rows(min_row=2):
+                for cell in row:
+                    if cell.column_letter in ['C', 'D']:
+                        cell.alignment = Alignment(wrap_text=True, vertical='top')
+                    else:
+                        cell.alignment = Alignment(wrap_text=False, vertical='top')
+            wb.save(excel_path)
+            print(f"✅ File saved: {excel_path}")
+        except Exception as e:
+            print("❌ Failed to save Excel file:", e)
 
-    wb = load_workbook(excel_path)
-    ws = wb.active
-    for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
-        ws.column_dimensions[col].width = width
-    for row in ws.iter_rows(min_row=2):
-        for cell in row:
-            if cell.column_letter in ['C', 'D']:
-                cell.alignment = Alignment(wrap_text=True, vertical='top')
-            else:
-                cell.alignment = Alignment(wrap_text=False, vertical='top')
-    wb.save(excel_path)
-    print(f"✅ Excel saved to {excel_path}")
-
-if __name__ == "__main__":
-    run_scraper()
+    except Exception as e:
+        print("❌ Scraper error:", e)
