@@ -7,8 +7,12 @@ from openpyxl.styles import Alignment
 from datetime import datetime
 
 # === Load keywords ===
-with open('keywords.json', 'r') as file:
-    keywords = json.load(file)
+try:
+    with open('keywords.json', 'r') as file:
+        keywords = json.load(file)
+except Exception as e:
+    print("❌ Error loading keywords.json:", e)
+    keywords = {}
 
 priority = ["Governance", "Learning", "Safety", "Climate"]
 
@@ -93,7 +97,7 @@ def extract_how_to_apply_from_html(description):
 def fetch_opportunities(type_name, base_url):
     listings, seen_links = [], set()
     page = 1
-    MAX_PAGES = 5  # ✅ Only scrape 5 pages
+    MAX_PAGES = 3  # Limit for testing
 
     while page <= MAX_PAGES:
         url = f"{base_url}?page={page}"
@@ -141,6 +145,7 @@ def fetch_opportunities(type_name, base_url):
             description = BeautifulSoup(description_html, 'html.parser').get_text(separator=' ', strip=True)
             how_to_apply = extract_how_to_apply_from_html(description)
 
+            # Keyword matching
             text_blob = (title + " " + description + " " + how_to_apply).lower()
             matched_verticals = []
             for vertical in priority:
@@ -149,16 +154,16 @@ def fetch_opportunities(type_name, base_url):
                         matched_verticals.append(vertical)
                         break
 
-            if matched_verticals:
-                listings.append({
-                    "Type": type_name,
-                    "Title": title,
-                    "Description": description,
-                    "How_to_Apply": how_to_apply,
-                    "Matched_Vertical": ", ".join(matched_verticals),
-                    "Deadline": deadline,
-                    "Link": link
-                })
+            # TEMP: skip filtering
+            listings.append({
+                "Type": type_name,
+                "Title": title,
+                "Description": description,
+                "How_to_Apply": how_to_apply,
+                "Matched_Vertical": ", ".join(matched_verticals) or "None",
+                "Deadline": deadline,
+                "Link": link
+            })
 
             seen_links.add(link)
 
@@ -171,6 +176,10 @@ def run_scraper():
     all_data = []
     for name, url in URLS.items():
         all_data.extend(fetch_opportunities(name, url))
+
+    print("📌 Total scraped:", len(all_data))
+    if all_data:
+        print("📌 Sample record:", all_data[0])
 
     if not all_data:
         print("⚠️ No data to save.")
