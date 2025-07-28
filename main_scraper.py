@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from datetime import datetime
 
-# === Load keywords.json ===
+# === Load keywords ===
 try:
     with open('keywords.json', 'r') as file:
         keywords = json.load(file)
@@ -30,8 +30,7 @@ def extract_description_after_apply_by(soup):
     for h2 in h2_tags:
         strong = h2.find('strong')
         if strong and 'Apply By:' in strong.text:
-            desc_parts = []
-            seen_lines = set()
+            desc_parts, seen_lines = [], set()
             for sibling in h2.find_all_next():
                 if sibling.name == "div" and "row_section" in sibling.get("class", []):
                     b_tag = sibling.find("b")
@@ -50,7 +49,7 @@ def extract_how_to_apply_from_html(description):
     if not description or not isinstance(description, str):
         return "N/A"
 
-    custom_keywords = [
+    custom_keywords = [  # Same as your original keywords
         "Selection Criteria", "Evaluation & Follow-Up", "Application Guidelines", "Eligible Applicants:",
         "Scope of Work:", "Proposal Requirements", "Evaluation Criteria", "Submission Details", "Eligible Entities",
         "How to apply", "Purpose of RFP", "Proposal Guidelines", "Eligibility Criteria", "Application must include:",
@@ -77,7 +76,6 @@ def extract_how_to_apply_from_html(description):
     while i < len(segments):
         segment = segments[i]
         segment_lower = segment.lower()
-
         if any(kw in segment_lower for kw in norm_keywords):
             section = ["• " + segment]
             i += 1
@@ -97,22 +95,21 @@ def extract_how_to_apply_from_html(description):
 def fetch_opportunities(type_name, base_url):
     listings, seen_links = [], set()
     page = 1
-    MAX_PAGES = 3  # Adjust to fewer pages for quicker scraping
+    MAX_PAGES = 5  # scrape first 5 pages only
 
     while page <= MAX_PAGES:
         url = f"{base_url}?page={page}"
-        print(f"🔍 Scraping {type_name} Page {page}: {url}")
-
+        print(f"🔍 Scraping {type_name} Page {page} → {url}")
         try:
-            res = requests.get(url, headers=HEADERS, timeout=15)
+            res = requests.get(url, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(res.text, 'html.parser')
         except Exception as e:
-            print(f"❌ Request error on page {page}: {e}")
+            print(f"❌ Failed to load page {page}: {e}")
             break
 
         cards = soup.find_all('div', class_='card-block')
         if not cards:
-            print(f"⚠️ No cards found on {type_name} Page {page}")
+            print(f"⚠️ No more cards found on {type_name} Page {page}. Stopping.")
             break
 
         for card in cards:
@@ -128,10 +125,10 @@ def fetch_opportunities(type_name, base_url):
                 continue
 
             try:
-                detail_res = requests.get(link, headers=HEADERS, timeout=15)
+                detail_res = requests.get(link, headers=HEADERS, timeout=10)
                 detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
             except Exception as e:
-                print(f"❌ Error fetching detail page: {link} - {e}")
+                print(f"❌ Failed to load detail page: {link} — {e}")
                 continue
 
             deadline = 'N/A'
@@ -153,70 +150,63 @@ def fetch_opportunities(type_name, base_url):
                         matched_verticals.append(vertical)
                         break
 
-            listings.append({
-                "Type": type_name,
-                "Title": title,
-                "Description": description,
-                "How_to_Apply": how_to_apply,
-                "Matched_Vertical": ", ".join(matched_verticals) or "None",
-                "Deadline": deadline,
-                "Link": link
-            })
+            if matched_verticals:
+                listings.append({
+                    "Type": type_name,
+                    "Title": title,
+                    "Description": description,
+                    "How_to_Apply": how_to_apply,
+                    "Matched_Vertical": ", ".join(matched_verticals),
+                    "Deadline": deadline,
+                    "Link": link
+                })
 
             seen_links.add(link)
-
         page += 1
         time.sleep(2)
 
     return listings
 
 def run_scraper():
+    all_data = []
+    for name, url in URLS.items():
+        all_data.extend(fetch_opportunities(name, url))
+
+    print("📌 Total records scraped:", len(all_data))
+    if not all_data:
+        print("⚠️ No data to save.")
+        return
+
     try:
-        all_data = []
-        for name, url in URLS.items():
-            all_data.extend(fetch_opportunities(name, url))
-
-        print("📦 Total items scraped:", len(all_data))
-        if not all_data:
-            print("⚠️ No data found to save")
-            return
-
-        if not os.path.exists("output"):
-            os.makedirs("output")
-
         df = pd.DataFrame(all_data)
-        df = df[df["Link"].notna() & (df["Link"].str.strip() != "")]
-
-        df["Clickable_Link"] = df.apply(
-            lambda row: '=HYPERLINK("{}","{}")'.format(row["Link"], row["Title"].replace('"', '""')),
+        df = df[df['Link'].notna() & (df['Link'].str.strip() != '')]
+        df['Clickable_Link'] = df.apply(
+            lambda row: '=HYPERLINK("{}","{}")'.format(row['Link'], row['Title'].replace('"', '""')),
             axis=1
         )
-
-        df["Deadline_Date"] = pd.to_datetime(df["Deadline"], format="%d %b %Y", errors="coerce")
+        df['Deadline_Date'] = pd.to_datetime(df['Deadline'], format='%d %b %Y', errors='coerce')
         today = pd.Timestamp(datetime.today().date())
-        df = df[df["Deadline_Date"] >= today]
+        df = df[df['Deadline_Date'] >= today]
+        df = df.sort_values(['Deadline_Date'], na_position='last')
+        df = df[['Type', 'Title', 'Description', 'How_to_Apply', 'Matched_Vertical', 'Deadline', 'Clickable_Link']]
 
-        df = df.sort_values(["Deadline_Date"], na_position="last")
-        df = df[["Type", "Title", "Description", "How_to_Apply", "Matched_Vertical", "Deadline", "Clickable_Link"]]
+        excel_path = 'relevant_grants.xlsx'  # 🔁 Save to project root
+        df.to_excel(excel_path, index=False, engine='openpyxl')
 
-        excel_path = "output/relevant_grants.xlsx"
-        try:
-            df.to_excel(excel_path, index=False, engine="openpyxl")
-
-            wb = load_workbook(excel_path)
-            ws = wb.active
-            for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
-                ws.column_dimensions[col].width = width
-            for row in ws.iter_rows(min_row=2):
-                for cell in row:
-                    if cell.column_letter in ['C', 'D']:
-                        cell.alignment = Alignment(wrap_text=True, vertical='top')
-                    else:
-                        cell.alignment = Alignment(wrap_text=False, vertical='top')
-            wb.save(excel_path)
-            print(f"✅ File saved: {excel_path}")
-        except Exception as e:
-            print("❌ Failed to save Excel file:", e)
-
+        wb = load_workbook(excel_path)
+        ws = wb.active
+        for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
+            ws.column_dimensions[col].width = width
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                if cell.column_letter in ['C', 'D']:
+                    cell.alignment = Alignment(wrap_text=True, vertical='top')
+                else:
+                    cell.alignment = Alignment(wrap_text=False, vertical='top')
+        wb.save(excel_path)
+        print(f"✅ Excel saved to {excel_path}")
     except Exception as e:
-        print("❌ Scraper error:", e)
+        print("❌ Error saving file:", e)
+
+if __name__ == "__main__":
+    run_scraper()
