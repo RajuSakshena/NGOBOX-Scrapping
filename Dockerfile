@@ -1,46 +1,34 @@
 FROM python:3.10-slim
 
-# Install system dependencies including Google Chrome
+# Install system dependencies and Chrome
 RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
-    gnupg \
-    unzip \
-    libglib2.0-0 \
-    libnss3 \
-    libgconf-2-4 \
-    libfontconfig1 \
-    libxss1 \
-    libappindicator3-1 \
-    libasound2 \
-    fonts-liberation \
-    xdg-utils \
-    libu2f-udev \
-    libvulkan1 \
-    libgl1-mesa-glx \
-    --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    wget curl unzip gnupg \
+    fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 \
+    libnspr4 libnss3 libxss1 xdg-utils libu2f-udev libvulkan1 \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome stable
-RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google.gpg
-RUN echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list
-RUN apt-get update && apt-get install -y google-chrome-stable
+# Install Chrome
+RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+    && apt-get install -y ./google-chrome-stable_current_amd64.deb \
+    && rm google-chrome-stable_current_amd64.deb
 
-# Set environment variable so Chrome can run headless
+# Set environment variables so Chrome runs properly
+ENV CHROME_BIN=/usr/bin/google-chrome
 ENV DISPLAY=:99
 
-# Set working directory
+# Set work directory
 WORKDIR /app
 
-# Copy everything into the image
+# Copy everything
 COPY . .
 
-# Install Python dependencies
+# Install Python packages
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose Streamlit port
+# Streamlit port
 EXPOSE 8501
 
-# Run the app
+# Start the Streamlit app
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.enableCORS=false"]
