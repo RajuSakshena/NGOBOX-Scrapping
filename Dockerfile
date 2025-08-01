@@ -1,10 +1,10 @@
-# Use a Python base image
+# Use a Python base image with a specific version
 FROM python:3.9-slim
 
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including build tools
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
@@ -27,12 +27,13 @@ RUN CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | head -
     && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver
 
-# Copy your application files into the container
-COPY . /app
-
-# Upgrade pip and install Python dependencies
-RUN python -m pip install --upgrade pip
+# Copy requirements.txt and install Python dependencies.
+# We do this before copying the rest of the app to leverage Docker's build cache.
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of your application files
+COPY . /app
 
 # Expose the port Streamlit runs on
 EXPOSE 8501
