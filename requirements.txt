@@ -1,0 +1,7 @@
+streamlit
+selenium
+beautifulsoup4
+pandas
+openpyxl
+requests
+webdriver-manager
