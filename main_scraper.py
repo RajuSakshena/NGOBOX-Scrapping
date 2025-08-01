@@ -1,5 +1,4 @@
 import os, time, json, re
-import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
