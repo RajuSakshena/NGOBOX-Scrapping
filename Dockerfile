@@ -1,42 +1,44 @@
-# Use a Python base image with a specific version
-FROM python:3.9-slim
+# Use official Python image
+FROM python:3.10-slim
 
-# Set the working directory
-WORKDIR /app
-
-# Install system dependencies including build tools
+# Install required Linux packages (Chrome & dependencies)
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     curl \
     gnupg \
-    build-essential \
-    libpq-dev \
+    libnss3 \
+    libxss1 \
+    libappindicator3-1 \
+    libasound2 \
+    fonts-liberation \
+    xdg-utils \
+    libu2f-udev \
+    libvulkan1 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Google Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+# Install Chrome
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/trusted.gpg.d/google.gpg
+RUN echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+RUN apt-get update && apt-get install -y google-chrome-stable
 
-# Install ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | head -1) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && chmod +x /usr/local/bin/chromedriver
+# Set display port to avoid crash
+ENV DISPLAY=:99
 
-# Copy requirements.txt and install Python dependencies.
-# We do this before copying the rest of the app to leverage Docker's build cache.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Set work directory
+WORKDIR /app
 
-# Copy the rest of your application files
-COPY . /app
+# Copy files
+COPY . .
 
-# Expose the port Streamlit runs on
+# Install Python dependencies
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+
+# Expose Streamlit port
 EXPOSE 8501
 
-# Run the Streamlit app when the container launches
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run the app
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.enableCORS=false"]
