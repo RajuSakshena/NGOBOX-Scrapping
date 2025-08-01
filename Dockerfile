@@ -28,7 +28,8 @@ RUN CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+' | head -
 # Copy your application files into the container
 COPY . /app
 
-# Install Python dependencies
+# Upgrade pip and install Python dependencies
+RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose the port Streamlit runs on
