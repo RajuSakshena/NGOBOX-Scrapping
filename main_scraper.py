@@ -1,24 +1,16 @@
 import os, time, json, re
+import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === Load keywords ===
-try:
-    with open('keywords.json', 'r') as file:
-        keywords = json.load(file)
-except Exception as e:
-    print("❌ Error loading keywords.json:", e)
-    keywords = {}
+with open('keywords.json', 'r') as file:
+    keywords = json.load(file)
 
 priority = ["Governance", "Learning", "Safety", "Climate"]
 
@@ -31,32 +23,13 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# Setup headless browser
-chrome_options = Options()
-chrome_options.add_argument("--headless")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-
-
-def fetch_with_selenium(url):
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "card-block"))
-        )
-        return driver.page_source
-    except Exception as e:
-        print(f"❌ Selenium failed to load: {url} — {e}")
-        return ""
-
 def extract_description_after_apply_by(soup):
     h2_tags = soup.find_all('h2', class_='card-text')
     for h2 in h2_tags:
         strong = h2.find('strong')
         if strong and 'Apply By:' in strong.text:
-            desc_parts, seen_lines = [], set()
+            desc_parts = []
+            seen_lines = set()
             for sibling in h2.find_all_next():
                 if sibling.name == "div" and "row_section" in sibling.get("class", []):
                     b_tag = sibling.find("b")
@@ -102,6 +75,7 @@ def extract_how_to_apply_from_html(description):
     while i < len(segments):
         segment = segments[i]
         segment_lower = segment.lower()
+
         if any(kw in segment_lower for kw in norm_keywords):
             section = ["• " + segment]
             i += 1
@@ -121,14 +95,19 @@ def extract_how_to_apply_from_html(description):
 def fetch_opportunities(type_name, base_url):
     listings, seen_links = [], set()
     page = 1
-    MAX_PAGES = 5
+    MAX_PAGES = 5  # ✅ Only scrape 5 pages
 
     while page <= MAX_PAGES:
         url = f"{base_url}?page={page}"
         print(f"🔍 Scraping {type_name} Page {page} → {url}")
 
-        html = fetch_with_selenium(url)
-        soup = BeautifulSoup(html, 'html.parser')
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=10, verify=False)
+            soup = BeautifulSoup(res.text, 'html.parser')
+        except Exception as e:
+            print(f"❌ Failed to load page {page}: {e}")
+            break
+
         cards = soup.find_all('div', class_='card-block')
         if not cards:
             print(f"⚠️ No more cards found on {type_name} Page {page}. Stopping.")
@@ -138,6 +117,7 @@ def fetch_opportunities(type_name, base_url):
             a = card.find('a', href=True)
             if not a:
                 continue
+
             href = a['href'].strip()
             link = href if href.startswith('http') else f"https://ngobox.org/{href.lstrip('/')}"
             title = a.get_text(strip=True)
@@ -146,8 +126,8 @@ def fetch_opportunities(type_name, base_url):
                 continue
 
             try:
-                detail_html = fetch_with_selenium(link)
-                detail_soup = BeautifulSoup(detail_html, 'html.parser')
+                detail_res = requests.get(link, headers=HEADERS, timeout=10, verify=False)
+                detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
             except Exception as e:
                 print(f"❌ Failed to load detail page: {link} — {e}")
                 continue
@@ -183,8 +163,9 @@ def fetch_opportunities(type_name, base_url):
                 })
 
             seen_links.add(link)
+
         page += 1
-        time.sleep(1)
+        time.sleep(2)
 
     return listings
 
@@ -193,43 +174,43 @@ def run_scraper():
     for name, url in URLS.items():
         all_data.extend(fetch_opportunities(name, url))
 
-    print("📌 Total records scraped:", len(all_data))
     if not all_data:
         print("⚠️ No data to save.")
         return
 
-    try:
-        df = pd.DataFrame(all_data)
-        df = df[df['Link'].notna() & (df['Link'].str.strip() != '')]
-        df['Clickable_Link'] = df.apply(
-            lambda row: '=HYPERLINK("{}","{}")'.format(row['Link'], row['Title'].replace('"', '""')),
-            axis=1
-        )
-        df['Deadline_Date'] = pd.to_datetime(df['Deadline'], format='%d %b %Y', errors='coerce')
-        today = pd.Timestamp(datetime.today().date())
-        df = df[df['Deadline_Date'] >= today]
-        df = df.sort_values(['Deadline_Date'], na_position='last')
-        df = df[['Type', 'Title', 'Description', 'How_to_Apply', 'Matched_Vertical', 'Deadline', 'Clickable_Link']]
+    if not os.path.exists('output'):
+        os.makedirs('output')
 
-        excel_path = 'relevant_grants.xlsx'
-        df.to_excel(excel_path, index=False, engine='openpyxl')
+    df = pd.DataFrame(all_data)
+    df = df[df['Link'].notna() & (df['Link'].str.strip() != '')]
 
-        wb = load_workbook(excel_path)
-        ws = wb.active
-        for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
-            ws.column_dimensions[col].width = width
-        for row in ws.iter_rows(min_row=2):
-            for cell in row:
-                if cell.column_letter in ['C', 'D']:
-                    cell.alignment = Alignment(wrap_text=True, vertical='top')
-                else:
-                    cell.alignment = Alignment(wrap_text=False, vertical='top')
-        wb.save(excel_path)
-        print(f"✅ Excel saved to {excel_path}")
-    except Exception as e:
-        print("❌ Error saving file:", e)
+    df['Clickable_Link'] = df.apply(
+        lambda row: '=HYPERLINK("{}","{}")'.format(row['Link'], row['Title'].replace('"', '""')),
+        axis=1
+    )
 
-    driver.quit()
+    df['Deadline_Date'] = pd.to_datetime(df['Deadline'], format='%d %b %Y', errors='coerce')
+    today = pd.Timestamp(datetime.today().date())
+    df = df[df['Deadline_Date'] >= today]
+
+    df = df.sort_values(['Deadline_Date'], na_position='last')
+    df = df[['Type', 'Title', 'Description', 'How_to_Apply', 'Matched_Vertical', 'Deadline', 'Clickable_Link']]
+
+    excel_path = 'output/relevant_grants.xlsx'
+    df.to_excel(excel_path, index=False, engine='openpyxl')
+
+    wb = load_workbook(excel_path)
+    ws = wb.active
+    for col, width in {'A': 20, 'B': 50, 'C': 80, 'D': 50, 'E': 30, 'F': 15, 'G': 50}.items():
+        ws.column_dimensions[col].width = width
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if cell.column_letter in ['C', 'D']:
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+            else:
+                cell.alignment = Alignment(wrap_text=False, vertical='top')
+    wb.save(excel_path)
+    print(f"✅ Excel saved to {excel_path}")
 
 if __name__ == "__main__":
     run_scraper()
