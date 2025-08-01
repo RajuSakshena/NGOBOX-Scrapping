@@ -1,6 +1,5 @@
 streamlit
-selenium
 pandas
+requests
 beautifulsoup4
 openpyxl
-webdriver-manager
